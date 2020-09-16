@@ -44,7 +44,7 @@ type ConfigWatcher interface {
 	//
 	// Cancel is an optional function to release resources in the producer. If
 	// provided, the consumer may call this function multiple times.
-	CreateWatch(*Request) (value chan Response, cancel func())
+	CreateWatch(*Request, func(Response)) (cancel func())
 }
 
 // ConfigFetcher fetches configuration resources from cache

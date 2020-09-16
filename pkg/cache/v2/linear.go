@@ -20,11 +20,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
 )
 
-type watches = map[chan Response]struct{}
+type watches = map[uint64]struct{}
 
 // LinearCache supports collectons of opaque resources. This cache has a
 // single collection indexed by resource names and manages resource versions
@@ -35,7 +36,9 @@ type LinearCache struct {
 	// Type URL specific to the cache.
 	typeURL string
 	// Collection of resources indexed by name.
-	resources map[string]types.Resource
+	cbs        map[uint64]func(Response)
+	cbsCounter uint64
+	resources  map[string]types.Resource
 	// Watches open by clients, indexed by resource name. Whenever resources
 	// are changed, the watch is triggered.
 	watches map[string]watches
@@ -83,6 +86,8 @@ func NewLinearCache(typeURL string, opts ...LinearCacheOption) *LinearCache {
 		watchAll:      make(watches),
 		version:       0,
 		versionVector: make(map[string]uint64),
+		cbs:           map[uint64]func(Response){},
+		cbsCounter:    0,
 	}
 	for _, opt := range opts {
 		opt(out)
@@ -90,7 +95,7 @@ func NewLinearCache(typeURL string, opts ...LinearCacheOption) *LinearCache {
 	return out
 }
 
-func (cache *LinearCache) respond(value chan Response, staleResources []string) {
+func (cache *LinearCache) respond(cb func(Response), staleResources []string) {
 	var resources []types.Resource
 	// TODO: optimize the resources slice creations across different clients
 	if len(staleResources) == 0 {
@@ -107,27 +112,27 @@ func (cache *LinearCache) respond(value chan Response, staleResources []string) 
 			}
 		}
 	}
-	value <- &RawResponse{
+	cb(&RawResponse{
 		Request:   &Request{TypeUrl: cache.typeURL},
 		Resources: resources,
 		Version:   cache.versionPrefix + strconv.FormatUint(cache.version, 10),
-	}
+	})
 }
 
 func (cache *LinearCache) notifyAll(modified map[string]struct{}) {
 	// de-duplicate watches that need to be responded
-	notifyList := make(map[chan Response][]string)
+	notifyList := make(map[uint64][]string)
 	for name := range modified {
 		for watch := range cache.watches[name] {
 			notifyList[watch] = append(notifyList[watch], name)
 		}
 		delete(cache.watches, name)
 	}
-	for value, stale := range notifyList {
-		cache.respond(value, stale)
+	for id, stale := range notifyList {
+		cache.respond(cache.cbs[id], stale)
 	}
-	for value := range cache.watchAll {
-		cache.respond(value, nil)
+	for id := range cache.watchAll {
+		cache.respond(cache.cbs[id], nil)
 	}
 	cache.watchAll = make(watches)
 }
@@ -164,11 +169,9 @@ func (cache *LinearCache) DeleteResource(name string) error {
 	return nil
 }
 
-func (cache *LinearCache) CreateWatch(request *Request) (chan Response, func()) {
-	value := make(chan Response, 1)
+func (cache *LinearCache) CreateWatch(request *Request, cb func(Response)) func() {
 	if request.TypeUrl != cache.typeURL {
-		close(value)
-		return value, nil
+		panic("wrong type url")
 	}
 	// If the version is not up to date, check whether any requested resource has
 	// been updated between the last version and the current version. This avoids the problem
@@ -203,16 +206,19 @@ func (cache *LinearCache) CreateWatch(request *Request) (chan Response, func()) 
 		}
 	}
 	if stale {
-		cache.respond(value, staleResources)
-		return value, nil
+		cache.respond(cb, staleResources)
+		return nil
 	}
+	id := atomic.AddUint64(&cache.cbsCounter, 1)
+	cache.cbs[id] = cb
 	// Create open watches since versions are up to date.
 	if len(request.ResourceNames) == 0 {
-		cache.watchAll[value] = struct{}{}
-		return value, func() {
+		cache.watchAll[id] = struct{}{}
+		return func() {
 			cache.mu.Lock()
 			defer cache.mu.Unlock()
-			delete(cache.watchAll, value)
+			delete(cache.watchAll, id)
+			delete(cache.cbs, id)
 		}
 	}
 	for _, name := range request.ResourceNames {
@@ -221,20 +227,21 @@ func (cache *LinearCache) CreateWatch(request *Request) (chan Response, func()) 
 			set = make(watches)
 			cache.watches[name] = set
 		}
-		set[value] = struct{}{}
+		set[id] = struct{}{}
 	}
-	return value, func() {
+	return func() {
 		cache.mu.Lock()
 		defer cache.mu.Unlock()
 		for _, name := range request.ResourceNames {
 			set, exists := cache.watches[name]
 			if exists {
-				delete(set, value)
+				delete(set, id)
 			}
 			if len(set) == 0 {
 				delete(cache.watches, name)
 			}
 		}
+		delete(cache.cbs, id)
 	}
 }
 
