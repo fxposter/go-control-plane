@@ -281,3 +281,24 @@ func TestSnapshotClear(t *testing.T) {
 		t.Errorf("keys should be empty")
 	}
 }
+
+func TestResponseOrdering(t *testing.T) {
+	c := cache.NewSnapshotCache(true, group{}, logger{t: t})
+	ch := make(chan cache.Response, 4)
+	c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: rsrc.EndpointType, ResourceNames: names[rsrc.EndpointType]}, ch)
+	c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: rsrc.ClusterType, ResourceNames: names[rsrc.ClusterType]}, ch)
+	c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: rsrc.RouteType, ResourceNames: names[rsrc.RouteType]}, ch)
+	c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: rsrc.ListenerType, ResourceNames: names[rsrc.ListenerType]}, ch)
+	if err := c.SetSnapshot(key, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	expectedTypeUrls := []string{rsrc.ClusterType, rsrc.EndpointType, rsrc.ListenerType, rsrc.RouteType}
+	var typeUrls []string
+	for range expectedTypeUrls {
+		resp := <-ch
+		typeUrls = append(typeUrls, resp.GetRequest().TypeUrl)
+	}
+	if !reflect.DeepEqual(typeUrls, expectedTypeUrls) {
+		t.Fatalf("incorrect types order: got %v, expected %v", typeUrls, expectedTypeUrls)
+	}
+}
