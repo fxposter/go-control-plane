@@ -210,15 +210,15 @@ func (s *server) process(stream Stream, reqCh <-chan *discovery.DiscoveryRequest
 				req.TypeUrl = defaultTypeURL
 			}
 
-			if s.callbacks != nil {
-				if err := s.callbacks.OnStreamRequest(streamID, req); err != nil {
-					return err
-				}
-			}
-
 			typeUrl := req.TypeUrl
 			responseNonce, seen := values.nonces[typeUrl]
 			if !seen || responseNonce == nonce {
+				if s.callbacks != nil {
+					if err := s.callbacks.OnStreamRequest(streamID, req); err != nil {
+						return err
+					}
+				}
+
 				if cancel, seen := values.cancellations[typeUrl]; seen && cancel != nil {
 					cancel()
 					if err := processAll(); err != nil {
