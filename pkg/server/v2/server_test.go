@@ -516,6 +516,52 @@ func TestStaleNonce(t *testing.T) {
 	}
 }
 
+func TestStaleNonceDoesNotTriggerOnRequestCallback(t *testing.T) {
+	for _, typ := range testTypes {
+		t.Run(typ, func(t *testing.T) {
+			config := makeMockConfigWatcher()
+			config.responses = makeResponses()
+			counter := 0
+			s := server.NewServer(context.Background(), config, server.CallbackFuncs{
+				StreamRequestFunc: func(i int64, request *discovery.DiscoveryRequest) error {
+					counter++
+					return nil
+				},
+			})
+
+			resp := makeMockStream(t)
+			resp.recv <- &discovery.DiscoveryRequest{
+				Node:    node,
+				TypeUrl: typ,
+			}
+			stop := make(chan struct{})
+			go func() {
+				if err := s.StreamAggregatedResources(resp); err != nil {
+					t.Errorf("StreamAggregatedResources() => got %v, want no error", err)
+				}
+				// should be two watches called
+				if counter != 1 {
+					t.Errorf("callback counts => got %v, want %v", counter, 1)
+				}
+				close(stop)
+			}()
+			select {
+			case <-resp.sent:
+				// stale request
+				resp.recv <- &discovery.DiscoveryRequest{
+					Node:          node,
+					TypeUrl:       typ,
+					ResponseNonce: "xyz",
+				}
+				close(resp.recv)
+			case <-time.After(1 * time.Second):
+				t.Fatal("timeout")
+			}
+			<-stop
+		})
+	}
+}
+
 func TestAggregatedHandlers(t *testing.T) {
 	config := makeMockConfigWatcher()
 	config.responses = makeResponses()
