@@ -150,12 +150,14 @@ func (s *server) process(stream Stream, reqCh <-chan *discovery.DiscoveryRequest
 		return nil
 	}
 
-	processAll := func() error {
+	processAllExcept := func(typeUrl string) error {
 		for {
 			select {
 			case resp := <-values.responses:
-				if err := process(resp); err != nil {
-					return err
+				if resp.GetRequest().GetTypeUrl() != typeUrl {
+					if err := process(resp); err != nil {
+						return err
+					}
 				}
 			default:
 				return nil
@@ -220,7 +222,7 @@ func (s *server) process(stream Stream, reqCh <-chan *discovery.DiscoveryRequest
 
 				if cancel, seen := values.cancellations[typeUrl]; seen && cancel != nil {
 					cancel()
-					if err := processAll(); err != nil {
+					if err := processAllExcept(typeUrl); err != nil {
 						return err
 					}
 				}
