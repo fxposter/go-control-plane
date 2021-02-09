@@ -223,7 +223,7 @@ func (cache *snapshotCache) SetSnapshot(node string, snapshot Snapshot) error {
 				if cache.log != nil {
 					cache.log.Debugf("respond open watch %d%v with new version %q", info.id, info.watch.Request.ResourceNames, info.resources.Version)
 				}
-				cache.respond(info.watch.Request, info.watch.Response, info.resources.Items, info.resources.Version)
+				cache.respond(info.watch.Request, info.watch.Response, info.resources.Items, info.resources.Version, false)
 			}
 		}
 	}

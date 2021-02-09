@@ -119,7 +119,8 @@ func TestSnapshotCacheWithTtl(t *testing.T) {
 		wg.Add(1)
 		t.Run(typ, func(t *testing.T) {
 			defer wg.Done()
-			value, _ := c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: typ, ResourceNames: names[typ]})
+			value := make(chan cache.Response, 1)
+			_ = c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: typ, ResourceNames: names[typ]}, value)
 			select {
 			case out := <-value:
 				if gotVersion, _ := out.GetVersion(); gotVersion != version {
@@ -145,7 +146,8 @@ func TestSnapshotCacheWithTtl(t *testing.T) {
 
 			end := time.After(5 * time.Second)
 			for {
-				value, cancel := c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: typ, ResourceNames: names[typ], VersionInfo: version})
+				value := make(chan cache.Response, 1)
+				cancel := c.CreateWatch(&discovery.DiscoveryRequest{TypeUrl: typ, ResourceNames: names[typ], VersionInfo: version}, value)
 
 				select {
 				case out := <-value:
