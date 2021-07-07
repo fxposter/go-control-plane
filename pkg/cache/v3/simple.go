@@ -187,6 +187,12 @@ func (cache *snapshotCache) sendHeartbeats(ctx context.Context, node string) {
 	}
 }
 
+type responseInfo struct {
+	id        int64
+	watch     ResponseWatch
+	resources Resources
+}
+
 // SetSnapshotCache updates a snapshot for a node.
 func (cache *snapshotCache) SetSnapshot(node string, snapshot Snapshot) error {
 	cache.mu.Lock()
@@ -197,15 +203,17 @@ func (cache *snapshotCache) SetSnapshot(node string, snapshot Snapshot) error {
 
 	// trigger existing watches for which version changed
 	if info, ok := cache.status[node]; ok {
+		var toRespond [types.UnknownType][]responseInfo
 		info.mu.Lock()
 		for id, watch := range info.watches {
-			version := snapshot.GetVersion(watch.Request.TypeUrl)
-			if version != watch.Request.VersionInfo {
-				if cache.log != nil {
-					cache.log.Debugf("respond open watch %d%v with new version %q", id, watch.Request.ResourceNames, version)
-				}
-				resources := snapshot.GetResourcesAndTtl(watch.Request.TypeUrl)
-				cache.respond(watch.Request, watch.Response, resources, version, false)
+			responseType := GetResponseType(watch.Request.TypeUrl)
+			resources := snapshot.Resources[responseType]
+			if resources.Version != watch.Request.VersionInfo {
+				toRespond[responseType] = append(toRespond[responseType], responseInfo{
+					id:        id,
+					watch:     watch,
+					resources: resources,
+				})
 
 				// discard the watch
 				delete(info.watches, id)
@@ -236,6 +244,15 @@ func (cache *snapshotCache) SetSnapshot(node string, snapshot Snapshot) error {
 			}
 		}
 		info.mu.Unlock()
+
+		for _, responses := range toRespond {
+			for _, info := range responses {
+				if cache.log != nil {
+					cache.log.Debugf("respond open watch %d%v with new version %q", info.id, info.watch.Request.ResourceNames, info.resources.Version)
+				}
+				cache.respond(info.watch.Request, info.watch.Response, info.resources.Items, info.resources.Version, true)
+			}
+		}
 	}
 
 	return nil

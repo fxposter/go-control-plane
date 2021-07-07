@@ -34,10 +34,10 @@ func (e SkipFetchError) Error() string {
 type ResponseType int
 
 const (
-	Endpoint ResponseType = iota
-	Cluster
-	Route
+	Cluster ResponseType = iota
+	Endpoint
 	Listener
+	Route
 	Secret
 	Runtime
 	ExtensionConfig
